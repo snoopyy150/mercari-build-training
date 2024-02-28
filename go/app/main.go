@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -93,7 +94,7 @@ func itemsHandler(w http.ResponseWriter, r *http.Request) {
 		// ハッシュ値を計算する
 		hash := sha256.New()
 		if _, err := io.Copy(hash, file); err != nil {
-			http.Error(w, "Failed to hash the image", http.StatusInternalServerError)
+			http.Error(w, "Failed to copy the image", http.StatusInternalServerError)
 			return
 		}
 		hashedFilename := fmt.Sprintf("%x", hash.Sum(nil)) + filepath.Ext(header.Filename)
@@ -145,19 +146,34 @@ func itemsHandler(w http.ResponseWriter, r *http.Request) {
 func searchItemsHandler(w http.ResponseWriter, r *http.Request) {
 	// クエリパラメータから検索キーワードを取得
 	keyword := r.URL.Query().Get("keyword")
-
 	if keyword == "" {
 		http.Error(w, "Keyword parameter is missing", http.StatusBadRequest)
 		return
 	}
 
-	// データベースからキーワードを含む商品を検索
-	// 以下は擬似コードです。実際のデータベース操作には適切な処理を行ってください。
-	var items []Item // Item は商品を表す構造体
-	// ...データベース検索処理...
-	// 例: SELECT * FROM items WHERE name LIKE '%keyword%'
+	// items.json ファイルから商品情報を読み込む
+	var items Items
+	data, err := ioutil.ReadFile("items.json")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := json.Unmarshal(data, &items); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// キーワードに一致する商品を検索
+	var matchedItems []Item
+	for _, item := range items.Items {
+		if strings.Contains(item.Name, keyword) || strings.Contains(item.Category, keyword) {
+			matchedItems = append(matchedItems, item)
+		}
+	}
 
 	// 検索結果を JSON でレスポンス
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string][]Item{"items": items})
+	if err := json.NewEncoder(w).Encode(map[string][]Item{"items": matchedItems}); err != nil {
+		http.Error(w, "Failed to encode items", http.StatusInternalServerError)
+	}
 }
