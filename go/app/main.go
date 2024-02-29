@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type Item struct {
@@ -42,6 +44,38 @@ func main() {
 
 	http.Handle("/", r)
 	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+var db *sql.DB
+
+func init() {
+	var err error
+	db, err = sql.Open("sqlite3", "mercari.sqlite3")
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func itemsHandler(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query("SELECT id, name, category, image_name FROM items")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var items []Item
+	for rows.Next() {
+		var item Item
+		if err := rows.Scan(&item.ID, &item.Name, &item.Category, &item.ImageName); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		items = append(items, item)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
 }
 
 func getItemsHandler(w http.ResponseWriter, r *http.Request) {
@@ -81,14 +115,11 @@ func postItemsHandler(w http.ResponseWriter, r *http.Request) {
 	// ハッシュ値を計算する
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
-		http.Error(w, "Failed to hash the image", http.StatusInternalServerError)
+		http.Error(w, "Failed to copy the image", http.StatusInternalServerError)
 		return
 	}
 	hashedFilename := fmt.Sprintf("%x", hash.Sum(nil)) + filepath.Ext(header.Filename)
 	item.ImageName = hashedFilename // 商品情報に画像ファイル名を追加
-
-	// ファイルポインタをリセットする
-	file.Seek(0, io.SeekStart)
 
 	// ハッシュ化されたファイル名で画像を保存する
 	dst, err := os.Create(filepath.Join("images", hashedFilename))
